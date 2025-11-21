@@ -1,0 +1,315 @@
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>کنترل ESP32</title>
+    
+    <!-- PWA Meta Tags -->
+    <meta name="theme-color" content="#4CAF50">
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="default">
+    <link rel="manifest" href="manifest.json">
+    
+    <!-- فونت و استایل -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@fontsource/vazirmatn@5.0.8/index.css">
+    <script src="https://unpkg.com/mqtt/dist/mqtt.min.js"></script>
+    
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Vazirmatn', sans-serif;
+        }
+        
+        body {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+            -webkit-touch-callout: none;
+            -webkit-user-select: none;
+            user-select: none;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 20px;
+            max-width: 400px;
+            margin: 0 auto;
+            box-shadow: 0 15px 35px rgba(0,0,0,0.2);
+        }
+        
+        .header {
+            text-align: center;
+            margin-bottom: 20px;
+            padding-bottom: 15px;
+            border-bottom: 2px solid #f0f0f0;
+        }
+        
+        .form-group {
+            margin-bottom: 15px;
+        }
+        
+        label {
+            display: block;
+            margin-bottom: 5px;
+            font-weight: bold;
+        }
+        
+        input {
+            width: 100%;
+            padding: 12px;
+            border: 2px solid #ddd;
+            border-radius: 10px;
+            font-size: 16px;
+        }
+        
+        .btn {
+            width: 100%;
+            padding: 15px;
+            background: #4CAF50;
+            color: white;
+            border: none;
+            border-radius: 10px;
+            font-size: 18px;
+            cursor: pointer;
+            margin-top: 10px;
+            transition: all 0.3s;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(76, 175, 80, 0.3);
+        }
+        
+        .controls {
+            display: none;
+            margin-top: 20px;
+        }
+        
+        .control-group {
+            background: #f9f9f9;
+            padding: 15px;
+            border-radius: 10px;
+            margin-bottom: 15px;
+        }
+        
+        .btn-control {
+            padding: 12px 20px;
+            margin: 5px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-weight: bold;
+            transition: all 0.3s;
+        }
+        
+        .btn-control:hover {
+            transform: scale(1.05);
+        }
+        
+        .btn-on { background: #4CAF50; color: white; }
+        .btn-off { background: #f44336; color: white; }
+        
+        .status {
+            text-align: center;
+            padding: 10px;
+            margin: 10px 0;
+            border-radius: 8px;
+            font-weight: bold;
+        }
+        
+        .connected { background: #d4edda; color: #155724; }
+        .disconnected { background: #f8d7da; color: #721c24; }
+        
+        .install-btn {
+            background: #ff9800 !important;
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>🎛️ کنترل ESP32</h1>
+            <p>اپلیکیشن اختصاصی شما</p>
+        </div>
+        
+        <!-- دکمه نصب PWA -->
+        <button class="btn install-btn" id="installButton">
+            📲 نصب اپلیکیشن
+        </button>
+        
+        <!-- بخش تنظیمات اتصال -->
+        <div class="form-group">
+            <label>آدرس سرور:</label>
+            <input type="text" id="server" value="r2211f41.ala.eu-central-1.emqxsl.com">
+        </div>
+        
+        <div class="form-group">
+            <label>پورت:</label>
+            <input type="number" id="port" value="8883">
+        </div>
+        
+        <div class="form-group">
+            <label>نام کاربری:</label>
+            <input type="text" id="username" value="ehsan">
+        </div>
+        
+        <div class="form-group">
+            <label>رمز عبور:</label>
+            <input type="password" id="password" value="nora">
+        </div>
+        
+        <button class="btn" onclick="connect()">🔗 اتصال به سرور</button>
+        
+        <div class="status disconnected" id="connectionStatus">
+            قطع ارتباط
+        </div>
+        
+        <!-- بخش کنترل‌ها -->
+        <div class="controls" id="controls">
+            <div class="control-group">
+                <h3>💡 کنترل LED</h3>
+                <button class="btn-control btn-on" onclick="sendCommand('ON')">روشن</button>
+                <button class="btn-control btn-off" onclick="sendCommand('OFF')">خاموش</button>
+                <div id="ledStatus">وضعیت: نامشخص</div>
+            </div>
+            
+            <div class="control-group">
+                <h3>📡 سنسور حرکتی</h3>
+                <div id="pirStatus">وضعیت: در انتظار داده...</div>
+            </div>
+            
+            <button class="btn" onclick="disconnect()" style="background: #ff9800;">
+                🔌 قطع ارتباط
+            </button>
+        </div>
+    </div>
+
+    <script>
+        // متغیرهای全局
+        let mqttClient = null;
+        const topics = {
+            send: 'esp32/led',
+            receiveLed: 'esp32/led/status',
+            receivePir: 'esp32/pir'
+        };
+
+        // ==================== PWA Installation ====================
+        let deferredPrompt;
+        const installButton = document.getElementById('installButton');
+
+        window.addEventListener('beforeinstallprompt', (e) => {
+            e.preventDefault();
+            deferredPrompt = e;
+            installButton.style.display = 'block';
+            
+            installButton.addEventListener('click', async () => {
+                installButton.style.display = 'none';
+                deferredPrompt.prompt();
+                const { outcome } = await deferredPrompt.userChoice;
+                console.log(`User response to the install prompt: ${outcome}`);
+                deferredPrompt = null;
+            });
+        });
+
+        // ثبت Service Worker
+        if ('serviceWorker' in navigator) {
+            window.addEventListener('load', function() {
+                navigator.serviceWorker.register('/sw.js')
+                    .then(function(registration) {
+                        console.log('ServiceWorker ثبت شد با scope: ', registration.scope);
+                    })
+                    .catch(function(error) {
+                        console.log('ServiceWorker ثبت نشد: ', error);
+                    });
+            });
+        }
+
+        // ==================== MQTT Functions ====================
+        function connect() {
+            const server = document.getElementById('server').value;
+            const port = document.getElementById('port').value;
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            
+            const brokerUrl = `wss://${server}:${port}/mqtt`;
+            
+            updateStatus('در حال اتصال...', 'disconnected');
+            
+            try {
+                mqttClient = mqtt.connect(brokerUrl, {
+                    username: username,
+                    password: password,
+                    clientId: 'webapp_' + Math.random().toString(16),
+                    clean: true
+                });
+                
+                mqttClient.on('connect', function() {
+                    console.log('✅ به سرور MQTT متصل شد');
+                    updateStatus('متصل شد', 'connected');
+                    document.getElementById('controls').style.display = 'block';
+                    mqttClient.subscribe(topics.receiveLed);
+                    mqttClient.subscribe(topics.receivePir);
+                });
+                
+                mqttClient.on('message', function(topic, message) {
+                    const messageStr = message.toString();
+                    console.log(`📨 پیام دریافت شده: ${topic} -> ${messageStr}`);
+                    
+                    if (topic === topics.receiveLed) {
+                        document.getElementById('ledStatus').textContent = 
+                            `وضعیت LED: ${messageStr}`;
+                    }
+                    
+                    if (topic === topics.receivePir) {
+                        const status = messageStr === '1' ? '⚠️ حرکت تشخیص داده شد!' : '✅ محیط آرام';
+                        document.getElementById('pirStatus').textContent = `وضعیت: ${status}`;
+                    }
+                });
+                
+                mqttClient.on('error', function(error) {
+                    console.error('❌ خطا:', error);
+                    updateStatus('خطا در اتصال', 'disconnected');
+                });
+                
+            } catch (error) {
+                console.error('❌ خطا در برقراری ارتباط:', error);
+                updateStatus('خطا در اتصال', 'disconnected');
+            }
+        }
+
+        function sendCommand(command) {
+            if (mqttClient && mqttClient.connected) {
+                mqttClient.publish(topics.send, command);
+                console.log(`📤 دستور ارسال شد: ${command}`);
+            } else {
+                alert('❌ ابتدا به سرور متصل شوید!');
+            }
+        }
+
+        function disconnect() {
+            if (mqttClient) {
+                mqttClient.end();
+                mqttClient = null;
+            }
+            updateStatus('قطع ارتباط', 'disconnected');
+            document.getElementById('controls').style.display = 'none';
+        }
+
+        function updateStatus(text, className) {
+            const statusElement = document.getElementById('connectionStatus');
+            statusElement.textContent = text;
+            statusElement.className = 'status ' + className;
+        }
+
+        // اتصال خودکار (اختیاری)
+        window.addEventListener('load', function() {
+            console.log('🚀 اپلیکیشن آماده است');
+        });
+    </script>
+</body>
+</html>
